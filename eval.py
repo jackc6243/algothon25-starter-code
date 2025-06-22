@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 
 # from GavinB import getMyPositionBase as getPosition
-from GavinB import getMyPositionLinearRegression as getPosition
+# from GavinB import getMyPositionLinearRegression as getPosition
+from GavinB import getMyPositionMeanReversion1 as getPosition
 
 nInst = 0
 nt = 0
