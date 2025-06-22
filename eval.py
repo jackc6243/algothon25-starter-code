@@ -2,7 +2,9 @@
 
 import numpy as np
 import pandas as pd
-from GavinB import getMyPositionBase as getPosition
+
+# from GavinB import getMyPositionBase as getPosition
+from GavinB import getMyPositionLinearRegression as getPosition
 
 nInst = 0
 nt = 0
@@ -17,7 +19,7 @@ def loadPrices(fn):
     return (df.values).T
 
 
-pricesFile = "./priceSlice_test.txt"
+pricesFile = "./prices_train.txt"
 prcAll = loadPrices(pricesFile)
 print("Loaded %d instruments for %d days" % (nInst, nt))
 

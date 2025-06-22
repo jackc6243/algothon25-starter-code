@@ -19,18 +19,65 @@ def getMyPositionBase(prcSoFar):
     lastRet /= lNorm
     rpos = np.array([int(x) for x in 5000 * lastRet / prcSoFar[:, -1]])
     currentPos = np.array([int(x) for x in currentPos + rpos])
+    return currentPos
 
 
 def getMyPositionLinearRegression(prcSoFar):
     global currentPos
     (nins, nt) = prcSoFar.shape
-    if nt < 2:
+    look_back_period = 7
+
+    if nt < look_back_period + 1:
         return np.zeros(nins)
-    lastRet = np.log(prcSoFar[:, -1] / prcSoFar[:, -2])
-    lNorm = np.sqrt(lastRet.dot(lastRet))
-    lastRet /= lNorm
-    rpos = np.array([int(x) for x in 5000 * lastRet / prcSoFar[:, -1]])
-    currentPos = np.array([int(x) for x in currentPos + rpos])
+
+    positions = np.zeros(nins)
+
+    for i in range(nins):
+        # Prepare training data using sliding window
+        X = []
+        y = []
+        # Create training examples: each window of look_back_period prices predicts the next price
+        for t in range(nt - look_back_period):
+            X.append(prcSoFar[i, t : t + look_back_period])
+            y.append(prcSoFar[i, t + look_back_period])
+
+        if len(X) == 0:  # Not enough data
+            continue
+
+        X = np.array(X)
+        y = np.array(y)
+
+        # Add bias term to X
+        X_b = np.c_[np.ones(X.shape[0]), X]
+
+        try:
+            # Closed-form solution for linear regression
+            w = np.linalg.inv(X_b.T @ X_b) @ X_b.T @ y
+
+            # Use last look_back_period prices to predict next price
+            x_pred = np.r_[1, prcSoFar[i, -look_back_period:]]
+            next_price_pred = x_pred @ w
+
+            # Calculate expected return
+            current_price = prcSoFar[i, -1]
+            expected_return = (next_price_pred - current_price) / current_price
+
+            # Position sizing
+            if abs(expected_return) > 0.001:  # Minimum threshold
+                position_size = int(5000 * expected_return / current_price)
+                positions[i] = position_size
+
+        except np.linalg.LinAlgError:
+            # Fallback to momentum if regression fails
+            print("failed")
+            if nt >= 2:
+                momentum = (prcSoFar[i, -1] - prcSoFar[i, -2]) / prcSoFar[i, -2]
+                if abs(momentum) > 0.001:
+                    position_size = int(5000 * momentum / prcSoFar[i, -1])
+                    positions[i] = position_size
+
+    currentPos = positions
+    return currentPos
 
 
 def splitPricesData(original_file, test_days):
