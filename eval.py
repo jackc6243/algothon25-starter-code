@@ -5,7 +5,9 @@ import pandas as pd
 
 # from GavinB import getMyPositionBase as getPosition
 # from GavinB import getMyPositionLinearRegression as getPosition
-from GavinB import getMyPositionMeanReversion1 as getPosition
+# from GavinB import getMyPositionMeanReversion1 as getPosition
+from GavinB import getMyPositionMomentum1 as getPosition
+
 
 nInst = 0
 nt = 0
