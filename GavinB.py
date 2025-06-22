@@ -84,41 +84,40 @@ def getMyPositionMeanReversion1(prcSoFar):
     global currentPos
     (nins, nt) = prcSoFar.shape
 
-    # Define constants
-    SMA_PERIOD = 20
-    EMA_PERIOD = 7
+    # Strategy parameters
+    LOOKBACK_PERIOD = 100  # SMA period (typical setting)
+    STANDARD_DEVIATIONS = 1.5  # Band width (typical setting)
+    MIN_DATA = LOOKBACK_PERIOD + 1
 
-    if nt < SMA_PERIOD:
+    if nt < MIN_DATA:
         return np.zeros(nins)
 
-    # Initialize position array
     positions = np.zeros(nins)
 
     for i in range(nins):
-        # Calculate 20-day SMA
-        sma = np.mean(prcSoFar[i, -SMA_PERIOD:])
+        # Extract relevant price history
+        prices = prcSoFar[i, -LOOKBACK_PERIOD - 1 : -1]  # Last LOOKBACK_PERIOD prices
+        current_price = prcSoFar[i, -1]  # Most recent price
 
-        # Calculate 7-day EMA
-        prices = prcSoFar[i, -EMA_PERIOD:]
-        ema = prices[0]  # Start with first price
-        alpha = 2 / (EMA_PERIOD + 1)
-        for price in prices[1:]:
-            ema = alpha * price + (1 - alpha) * ema
+        # Calculate Bollinger Bands
+        sma = np.mean(prices)  # Simple Moving Average
+        std_dev = np.std(prices)  # Standard Deviation
+        upper_band = sma + (STANDARD_DEVIATIONS * std_dev)
+        lower_band = sma - (STANDARD_DEVIATIONS * std_dev)
 
-        # Generate signal based on crossover
+        # Generate trading signal
         signal = 0
-        if ema > sma:
-            signal = 1  # Buy signal
-        elif ema < sma:
-            signal = -1  # Sell signal
+        if current_price < lower_band:
+            signal = 1  # Buy signal (price below lower band)
+        elif current_price > upper_band:
+            signal = -1  # Sell signal (price above upper band)
 
         # Position sizing
-        current_price = prcSoFar[i, -1]
-        if current_price != 0:  # Avoid division by zero
+        if current_price != 0:
             position_size = int(5000 * signal / current_price)
             positions[i] = position_size
 
-    # Update global position
+    # Update global position state
     currentPos = np.add(currentPos, positions).astype(int)
     return currentPos
 
@@ -133,10 +132,6 @@ def splitPricesData(original_file, test_days):
         )
     train_data = df.iloc[:train_days, :].values.T
     test_data = df.iloc[train_days:, :].values.T
-    print(f"Split data: {train_days} days for training, {test_days} days for testing")
-    print(f"Training data shape: {train_data.shape}")
-    print(f"Testing data shape: {test_data.shape}")
-    return train_data, test_data
 
 
 def savePricesToCSV(data, filename):
