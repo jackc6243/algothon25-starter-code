@@ -122,6 +122,46 @@ def getMyPositionMeanReversion1(prcSoFar):
     currentPos = np.add(currentPos, positions).astype(int)
     return currentPos
 
+def getMyPositionMomentum1(prcSoFar):
+    global currentPos
+    (nins, nt) = prcSoFar.shape
+
+    # Define constants
+    MOMENTUM_PERIOD = 5  # Look back period for momentum calculation
+    MOMENTUM_THRESHOLD = 0.02  # 2% threshold for momentum signal
+
+    if nt < MOMENTUM_PERIOD + 1:
+        return np.zeros(nins)
+
+    # Initialize position array
+    positions = np.zeros(nins)
+
+    for i in range(nins):
+        # Calculate momentum as percentage return over MOMENTUM_PERIOD
+        current_price = prcSoFar[i, -1]
+        past_price = prcSoFar[i, -(MOMENTUM_PERIOD + 1)]
+        
+        if past_price != 0:  # Avoid division by zero
+            momentum = (current_price - past_price) / past_price
+        else:
+            momentum = 0
+
+        # Generate momentum signal
+        signal = 0
+        if momentum > MOMENTUM_THRESHOLD:
+            signal = 1  # Strong positive momentum - buy
+        elif momentum < -MOMENTUM_THRESHOLD:
+            signal = -1  # Strong negative momentum - sell/short
+
+        # Position sizing
+        if current_price != 0:  # Avoid division by zero
+            position_size = int(5000 * signal / current_price)
+            positions[i] = position_size
+
+    # Update global position
+    currentPos = np.add(currentPos, positions).astype(int)
+    return currentPos
+
 
 def splitPricesData(original_file, test_days):
     df = pd.read_csv(original_file, sep=r"\s+", header=None, index_col=None)
