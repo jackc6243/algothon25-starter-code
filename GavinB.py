@@ -95,7 +95,7 @@ class LinearRegressionStrategy(BaseStrategy):
 
 
 class MeanReversionStrategy(BaseStrategy):
-    """Mean Reversion Strategy (Stateful)"""
+    """Mean Reversion Strategy (Stateful) with Stop Loss"""
 
     def __init__(
         self,
@@ -104,12 +104,20 @@ class MeanReversionStrategy(BaseStrategy):
         standard_deviations=2,
         max_look_back=110,
         capital_allocation=7000,
+        stop_loss_pct=0.05,  # 5% stop loss
     ):
         super().__init__(n_inst)
         self.lookback_period = lookback_period
         self.standard_deviations = standard_deviations
         self.max_look_back = max_look_back
         self.capital_allocation = capital_allocation
+        self.stop_loss_pct = stop_loss_pct
+
+        # Track entry prices for stop loss calculation
+        self.entry_prices = np.zeros(n_inst)
+        self.position_active = np.zeros(
+            n_inst, dtype=bool
+        )  # Track if position is active
 
     def __call__(self, prcSoFar):
         (nins, nt) = prcSoFar.shape
@@ -134,6 +142,29 @@ class MeanReversionStrategy(BaseStrategy):
             trend_end_price = current_price
             trend_direction = np.sign(trend_end_price - trend_start_price)
 
+            # Check stop loss first
+            stop_loss_triggered = False
+            if self.position_active[i] and self.entry_prices[i] > 0:
+                if positions[i] > 0:  # Long position
+                    loss_pct = (
+                        self.entry_prices[i] - current_price
+                    ) / self.entry_prices[i]
+                    if loss_pct >= self.stop_loss_pct:
+                        stop_loss_triggered = True
+                elif positions[i] < 0:  # Short position
+                    loss_pct = (
+                        current_price - self.entry_prices[i]
+                    ) / self.entry_prices[i]
+                    if loss_pct >= self.stop_loss_pct:
+                        stop_loss_triggered = True
+
+            # Execute stop loss if triggered
+            if stop_loss_triggered:
+                positions[i] = 0
+                self.entry_prices[i] = 0
+                self.position_active[i] = False
+                continue
+
             # Generate buy/sell signal based on mean reversion
             signal = 0
             if current_price < lower_band and trend_direction >= 0:
@@ -144,7 +175,26 @@ class MeanReversionStrategy(BaseStrategy):
             # Add to existing position based on signal
             if current_price > 0:
                 position_change = int(self.capital_allocation * signal / current_price)
-                positions[i] += position_change
+                new_position = positions[i] + position_change
+
+                # Update entry price if taking a new position
+                if positions[i] == 0 and new_position != 0:
+                    # New position - set entry price
+                    self.entry_prices[i] = current_price
+                    self.position_active[i] = True
+                elif positions[i] != 0 and new_position == 0:
+                    # Closing position - reset entry price
+                    self.entry_prices[i] = 0
+                    self.position_active[i] = False
+                elif (
+                    positions[i] != 0
+                    and new_position != 0
+                    and np.sign(positions[i]) != np.sign(new_position)
+                ):
+                    # Position direction changed - update entry price
+                    self.entry_prices[i] = current_price
+
+                positions[i] = new_position
 
         self.curPos = positions
         return self.curPos

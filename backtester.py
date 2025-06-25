@@ -47,20 +47,25 @@ class BackTester:
         value = 0
         todayPLL = []
         dailyPositions = []
+        dailyStockProfits = []  # Track profit for each stock each day
 
         # Calculate start day index (1-based index in correct backtest)
         startDay = (
             self.nt + 1 - numTestDays
         )  # Matches correct backtest's startDay calculation
 
-        # Loop through test days (inclusive of last day)
-        for t in range(startDay, self.nt + 1):
+        # Track positions for ALL days (including warm-up period)
+        allDailyPositions = []
+        allDailyStockProfits = []
+
+        # Loop through ALL days to get complete position history
+        for t in range(1, self.nt + 1):
             # Get price history up to current day (0-indexed)
             prcHistSoFar = self.data[:, :t]
             curPrices = prcHistSoFar[:, -1]  # Current day's prices
 
-            # Record position at beginning of day
-            dailyPositions.append(curPos.copy())
+            # Record position at beginning of day (for all days)
+            allDailyPositions.append(curPos.copy())
 
             # Trading logic (skip trading on very last day)
             if t < self.nt:  # Not the last day
@@ -87,17 +92,38 @@ class BackTester:
                 # Update positions
                 curPos = newPos.copy()
 
-            # Calculate portfolio value
-            posValue = np.dot(curPos, curPrices)
-            todayPL = cash + posValue - value
-            value = cash + posValue
+            # Calculate profit for each stock (position * price change)
+            if t > 1:
+                # Get previous day's prices for calculating price changes
+                prevPrices = prcHistSoFar[:, -2] if t > 1 else curPrices
+                priceChanges = curPrices - prevPrices
+                stockProfits = curPos * priceChanges
+                allDailyStockProfits.append(stockProfits)
+            else:
+                # For the first day, profit is 0 since we don't have previous prices
+                allDailyStockProfits.append(np.zeros(self.nInst))
 
-            # Record P&L (skip first day as in correct backtest)
-            if t > startDay:
-                todayPLL.append(todayPL)
+            # Calculate portfolio value and P&L (only for test period)
+            if t >= startDay:
+                posValue = np.dot(curPos, curPrices)
+                todayPL = cash + posValue - value
+                value = cash + posValue
+
+                # Record P&L (skip first day of test period as in correct backtest)
+                if t > startDay:
+                    todayPLL.append(todayPL)
+                    dailyPositions.append(curPos.copy())
+                    dailyStockProfits.append(allDailyStockProfits[-1])
 
         # Prepare outputs
         dailyPositions = np.array(dailyPositions).T  # Transpose to (nInst, days)
+        dailyStockProfits = np.array(dailyStockProfits).T  # Transpose to (nInst, days)
+        allDailyPositions = np.array(
+            allDailyPositions
+        ).T  # Transpose to (nInst, all_days)
+        allDailyStockProfits = np.array(
+            allDailyStockProfits
+        ).T  # Transpose to (nInst, all_days)
 
         # Calculate statistics
         pll = np.array(todayPLL)
@@ -116,7 +142,14 @@ class BackTester:
             "score": score,
         }
 
-        return dailyPositions, todayPLL, stats
+        return (
+            dailyPositions,
+            todayPLL,
+            stats,
+            dailyStockProfits,
+            allDailyPositions,
+            allDailyStockProfits,
+        )
 
     def gridsearch(self, param_ranges, numTestDays):
         best_score = -np.inf
@@ -131,7 +164,7 @@ class BackTester:
             params = dict(zip(param_names, value_combo))
 
             # Run backtest with current parameters
-            _, _, stats = self.backtest(numTestDays, params=params)
+            _, _, stats, _, _, _ = self.backtest(numTestDays, params=params)
 
             print(f"\nTesting parameters: {params}")
             print("Statistics:")
