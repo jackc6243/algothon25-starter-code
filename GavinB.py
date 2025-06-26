@@ -519,3 +519,142 @@ def discover_lead_lag_pairs(prcSoFar, window=60, max_lag=10, min_corr=0.3, top_n
                 pairs.append((i, j, best_lag, best_corr))
     pairs = sorted(pairs, key=lambda x: abs(x[3]), reverse=True)
     return pairs[:top_n]
+
+
+class MarkovStrategy(BaseStrategy):
+    """Markov Chain Strategy for Price Prediction (Stateful)"""
+
+    def __init__(
+        self,
+        n_inst,
+        lookback_period=11,
+        capital_allocation=6000,
+        min_confidence=0.9  # Minimum confidence threshold for trading
+    ):
+        super().__init__(n_inst)
+        self.lookback_period = lookback_period
+        self.capital_allocation = capital_allocation
+        self.min_confidence = min_confidence
+        self.transition_matrices = [None] * n_inst
+
+    def _build_transition_matrix(self, price_series):
+        """
+        Build a 2-state Markov transition matrix based on price changes:
+        State 0: price down or unchanged
+        State 1: price up
+        """
+        n = len(price_series)
+        if n < 3:  # Need at least 3 points for 2 transitions
+            return np.array([[0.5, 0.5], [0.5, 0.5]])  # Uniform if insufficient data
+
+        # Convert price series to states (0 = down/flat, 1 = up)
+        states = np.zeros(n-1, dtype=int)
+        for i in range(1, n):
+            states[i-1] = 1 if price_series[i] > price_series[i-1] else 0
+
+        # Count state transitions
+        transition_counts = np.zeros((2, 2))
+        for i in range(len(states)-1):
+            current_state = states[i]
+            next_state = states[i+1]
+            transition_counts[current_state, next_state] += 1
+
+        # Convert counts to probabilities
+        transition_matrix = np.zeros((2, 2))
+        for i in range(2):
+            total_transitions = np.sum(transition_counts[i])
+            if total_transitions > 0:
+                transition_matrix[i] = transition_counts[i] / total_transitions
+            else:
+                transition_matrix[i] = [0.5, 0.5]  # Default to 50/50
+
+        return transition_matrix
+
+    def _get_signal_strength(self, prob_up, prob_down):
+        """
+        Calculate signal strength based on probability confidence
+        """
+        max_prob = max(prob_up, prob_down)
+        
+        # Only trade if confidence exceeds minimum threshold
+        if max_prob < self.min_confidence:
+            return 0
+        
+        # Signal strength based on confidence level
+        if prob_up > prob_down:
+            return min(1.0, (prob_up - 0.5) * 2)  # Scale 0.5-1.0 to 0-1.0
+        else:
+            return -min(1.0, (prob_down - 0.5) * 2)  # Negative for sell signal
+
+    def __call__(self, prcSoFar):
+        (nins, nt) = prcSoFar.shape
+        self.reset_positions(nins)
+
+        if nt < self.lookback_period + 2:  # Need extra data for transitions
+            self.curPos = np.zeros(nins)
+            return self.curPos
+
+        positions = self.curPos.copy()
+
+        for i in range(nins):
+            # Get recent price history
+            prices = prcSoFar[i, -(self.lookback_period + 1):]
+            current_price = prices[-1]
+
+            if current_price <= 0:
+                continue
+
+            # Build/update transition matrix for this instrument
+            transition_matrix = self._build_transition_matrix(prices)
+            self.transition_matrices[i] = transition_matrix
+
+            # Determine current state (based on latest price change)
+            if len(prices) >= 2:
+                current_state = 1 if prices[-1] > prices[-2] else 0
+            else:
+                continue
+
+            # Get probabilities for next state
+            prob_down = transition_matrix[current_state, 0]  # P(next state = down)
+            prob_up = transition_matrix[current_state, 1]    # P(next state = up)
+
+            # Generate trading signal based on Markov prediction
+            signal_strength = self._get_signal_strength(prob_up, prob_down)
+
+            # Position sizing based on signal strength
+            if abs(signal_strength) > 0:
+                position_change = int(self.capital_allocation * signal_strength / current_price)
+                positions[i] += position_change
+
+        self.curPos = positions
+        return self.curPos
+
+    def get_transition_probabilities(self, instrument_id):
+        """
+        Get the current transition matrix for a specific instrument
+        Useful for debugging and analysis
+        """
+        if 0 <= instrument_id < len(self.transition_matrices):
+            return self.transition_matrices[instrument_id]
+        return None
+
+    def print_strategy_state(self, prcSoFar, instrument_id=0):
+        """
+        Print current strategy state for debugging
+        """
+        if instrument_id < len(self.transition_matrices):
+            matrix = self.transition_matrices[instrument_id]
+            if matrix is not None:
+                print(f"Instrument {instrument_id} Transition Matrix:")
+                print(f"From DOWN state: {matrix[0][0]:.3f} stay DOWN, {matrix[0][1]:.3f} go UP")
+                print(f"From UP state:   {matrix[1][0]:.3f} go DOWN, {matrix[1][1]:.3f} stay UP")
+                
+                # Current state
+                prices = prcSoFar[instrument_id, -(self.lookback_period + 1):]
+                if len(prices) >= 2:
+                    current_state = 1 if prices[-1] > prices[-2] else 0
+                    state_name = "UP" if current_state == 1 else "DOWN"
+                    next_up_prob = matrix[current_state, 1]
+                    print(f"Current state: {state_name}")
+                    print(f"Predicted probability of UP next: {next_up_prob:.3f}")
+
