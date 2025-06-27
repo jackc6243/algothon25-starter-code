@@ -54,6 +54,8 @@ momentum_roc_strategy = MomentumROCStrategy(
     nInst, roc_period=6, ma_period=3, roc_threshold=0.01, capital_allocation=5000
 )
 
+markov_strategy = MarkovStrategy(nInst)
+
 # Create mixed strategy combining mean reversion and momentum
 strategy_classes = [MeanReversionStrategy2, MomentumStrategy]
 strategy_params_list = [
@@ -65,7 +67,7 @@ strategy_params_list = [
     },
     {"momentum_period": 5, "momentum_threshold": 0.02, "capital_allocation": 5000},
 ]
-decays = [0.8, 0.8]  # Decay factors for strategy scores
+decays = [0.3, 0.3]  # Decay factors for strategy scores
 mixed_strategy = MixedStrategy(nInst, strategy_classes, strategy_params_list, decays)
 
 # Set the active strategy (change this to test different strategies)
