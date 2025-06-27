@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from backtester import BackTester
-from GavinB import MeanReversionStrategy
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -13,15 +12,16 @@ plt.style.use("seaborn-v0_8")
 sns.set_palette("husl")
 
 
-def backtest_mean_reversion_strategy(
-    data_file, num_test_days=100, strategy_params=None
+def backtest_strategy(
+    data_file, num_test_days=100, strategy=None, strategy_params=None
 ):
     """
-    Backtest the mean reversion strategy and return results for visualization
+    Backtest a given strategy and return results for visualization
 
     Parameters:
     - data_file: Path to the price data file
     - num_test_days: Number of days to test
+    - strategy: Strategy class to use for backtesting
     - strategy_params: Dictionary of strategy parameters
 
     Returns:
@@ -35,18 +35,12 @@ def backtest_mean_reversion_strategy(
     - price_data: Array of price data (nInst, all_days)
     """
 
-    # Default strategy parameters
-    if strategy_params is None:
-        strategy_params = {
-            "lookback_period": 14,
-            "standard_deviations": 2,
-            "max_look_back": 110,
-            "capital_allocation": 7000,
-        }
+    if strategy is None:
+        raise ValueError("You must provide a strategy class to backtest_strategy.")
 
     # Initialize backtester
     backtester = BackTester(data_file)
-    backtester.set_getPos(MeanReversionStrategy, **strategy_params)
+    backtester.set_getPos(strategy)
 
     # Run backtest
     (
@@ -413,7 +407,7 @@ def run_complete_analysis(
         all_daily_positions,
         all_daily_stock_profits,
         price_data,
-    ) = backtest_mean_reversion_strategy(data_file, num_test_days, strategy_params)
+    ) = backtest_strategy(data_file, num_test_days, strategy_params=strategy_params)
 
     # Print summary
     print_performance_summary(stats, strategy_params)

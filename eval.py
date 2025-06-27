@@ -40,7 +40,10 @@ lead_lag_strategy = LeadLagStrategy(
 momentum_strategy = MomentumStrategy(
     nInst, momentum_period=5, momentum_threshold=0.02, capital_allocation=5000
 )
-mean_reversion_strategy = MeanReversionStrategy(
+emaSma_strategy = EmaSmaCrossStrategy(
+    nInst, ema_period=30, sma_period=70, capital_allocation=3000
+)
+mean_reversion_strategy = MeanReversionStrategy2(
     nInst,
     lookback_period=14,
     standard_deviations=2,
@@ -52,7 +55,7 @@ momentum_roc_strategy = MomentumROCStrategy(
 )
 
 # Create mixed strategy combining mean reversion and momentum
-strategy_classes = [MeanReversionStrategy, MomentumStrategy]
+strategy_classes = [MeanReversionStrategy2, MomentumStrategy]
 strategy_params_list = [
     {
         "lookback_period": 14,
@@ -67,7 +70,7 @@ mixed_strategy = MixedStrategy(nInst, strategy_classes, strategy_params_list, de
 
 # Set the active strategy (change this to test different strategies)
 active_strategy = (
-    mixed_strategy  # Using mixed strategy with mean reversion and momentum
+    emaSma_strategy  # Using mixed strategy with mean reversion and momentum
 )
 
 

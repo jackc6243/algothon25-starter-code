@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 class BaseStrategy:
@@ -94,30 +95,23 @@ class LinearRegressionStrategy(BaseStrategy):
         return self.curPos
 
 
-class MeanReversionStrategy(BaseStrategy):
-    """Mean Reversion Strategy (Stateful) with Stop Loss"""
+class MeanReversionStrategy2(BaseStrategy):
+    """Mean Reversion Strategy (Stateful)"""
 
     def __init__(
         self,
         n_inst,
-        lookback_period=14,
+        lookback_period=120,
         standard_deviations=2,
-        max_look_back=110,
+        max_look_back=70,
         capital_allocation=7000,
-        stop_loss_pct=0.05,  # 5% stop loss
     ):
         super().__init__(n_inst)
         self.lookback_period = lookback_period
         self.standard_deviations = standard_deviations
         self.max_look_back = max_look_back
         self.capital_allocation = capital_allocation
-        self.stop_loss_pct = stop_loss_pct
-
-        # Track entry prices for stop loss calculation
-        self.entry_prices = np.zeros(n_inst)
-        self.position_active = np.zeros(
-            n_inst, dtype=bool
-        )  # Track if position is active
+        self.constant_position_size = 80
 
     def __call__(self, prcSoFar):
         (nins, nt) = prcSoFar.shape
@@ -134,7 +128,7 @@ class MeanReversionStrategy(BaseStrategy):
         for i in range(nins):
             prices = prcSoFar[i, -self.lookback_period - 1 : -1]
             current_price = prcSoFar[i, -1]
-            sma = np.mean(prices)
+            sma = np.mean(prices)  # Middle line (SMA)
             std_dev = np.std(prices)
             upper_band = sma + (self.standard_deviations * std_dev)
             lower_band = sma - (self.standard_deviations * std_dev)
@@ -142,59 +136,39 @@ class MeanReversionStrategy(BaseStrategy):
             trend_end_price = current_price
             trend_direction = np.sign(trend_end_price - trend_start_price)
 
-            # Check stop loss first
-            stop_loss_triggered = False
-            if self.position_active[i] and self.entry_prices[i] > 0:
-                if positions[i] > 0:  # Long position
-                    loss_pct = (
-                        self.entry_prices[i] - current_price
-                    ) / self.entry_prices[i]
-                    if loss_pct >= self.stop_loss_pct:
-                        stop_loss_triggered = True
-                elif positions[i] < 0:  # Short position
-                    loss_pct = (
-                        current_price - self.entry_prices[i]
-                    ) / self.entry_prices[i]
-                    if loss_pct >= self.stop_loss_pct:
-                        stop_loss_triggered = True
-
-            # Execute stop loss if triggered
-            if stop_loss_triggered:
-                positions[i] = 0
-                self.entry_prices[i] = 0
-                self.position_active[i] = False
-                continue
-
-            # Generate buy/sell signal based on mean reversion
             signal = 0
-            if current_price < lower_band and trend_direction >= 0:
-                signal = 1  # Buy signal - price below lower band and trend is up
-            elif current_price > upper_band and trend_direction <= 0:
-                signal = -1  # Sell signal - price above upper band and trend is down
+            if positions[i] == 0:
+                # Generate buy/sell signal based on mean reversion (entry signals)
+                if current_price < lower_band:
+                    signal = 1  # Buy signal - price below lower band and trend is up
+                elif current_price > upper_band:
+                    signal = (
+                        -1
+                    )  # Sell signal - price above upper band and trend is down
+            else:
+                # Take profit logic - close position when price touches the middle line (SMA)
+                if positions[i] > 0:  # Long position
+                    if (
+                        current_price >= sma
+                    ):  # Take profit when price reaches SMA (middle line)
+                        signal = -1  # Take profit - sell when price reaches middle line
+                elif positions[i] < 0:  # Short position
+                    if (
+                        current_price <= sma
+                    ):  # Take profit when price reaches SMA (middle line)
+                        signal = 1  # Take profit - buy when price reaches middle line
 
-            # Add to existing position based on signal
-            if current_price > 0:
-                position_change = int(self.capital_allocation * signal / current_price)
-                new_position = positions[i] + position_change
+            # Add constant position size based on signal
+            position_change = signal * self.constant_position_size
 
-                # Update entry price if taking a new position
-                if positions[i] == 0 and new_position != 0:
-                    # New position - set entry price
-                    self.entry_prices[i] = current_price
-                    self.position_active[i] = True
-                elif positions[i] != 0 and new_position == 0:
-                    # Closing position - reset entry price
-                    self.entry_prices[i] = 0
-                    self.position_active[i] = False
-                elif (
-                    positions[i] != 0
-                    and new_position != 0
-                    and np.sign(positions[i]) != np.sign(new_position)
-                ):
-                    # Position direction changed - update entry price
-                    self.entry_prices[i] = current_price
+            # Print trade information when a signal is generated
+            # if signal != 0:
+            #     signal_type = "BUY" if signal == 1 else "SELL"
+            #     print(
+            #         f"MeanReversion TRADE: Instrument {i}, {signal_type}, Price: {current_price:.4f}, Position Change: {position_change}, Current Position: {positions[i]}"
+            #     )
 
-                positions[i] = new_position
+            positions[i] += position_change
 
         self.curPos = positions
         return self.curPos
@@ -493,6 +467,78 @@ class MixedStrategy(BaseStrategy):
         return final_positions
 
 
+class EmaSmaCrossStrategy(BaseStrategy):
+    """Strategy using EMA and SMA crossovers with user-specified periods and capital allocation."""
+
+    def __init__(self, n_inst, ema_period=10, sma_period=30, capital_allocation=7000):
+        super().__init__(n_inst)
+        self.ema_period = ema_period
+        self.sma_period = sma_period
+        self.capital_allocation = capital_allocation
+        # State for each instrument
+        self.prev_ema = [None] * n_inst
+        self.sma_window = [[] for _ in range(n_inst)]
+        self.prev_sma = [None] * n_inst
+
+    def reset_positions(self, n_inst):
+        super().reset_positions(n_inst)
+        # Reset state if number of instruments changes
+        self.prev_ema = [None] * n_inst
+        self.sma_window = [[] for _ in range(n_inst)]
+        self.prev_sma = [None] * n_inst
+
+    def __call__(self, prcSoFar):
+        (nins, nt) = prcSoFar.shape
+        positions = np.zeros(nins)
+        alpha = 2 / (self.ema_period + 1)
+
+        for i in range(nins):
+            price_data = prcSoFar[i, :]
+            current_price = price_data[-1]
+            # Update SMA window
+            if len(self.sma_window[i]) >= self.sma_period:
+                self.sma_window[i].pop(0)
+            self.sma_window[i].append(current_price)
+            # Calculate rolling SMA
+            if len(self.sma_window[i]) == self.sma_period:
+                curr_sma = np.mean(self.sma_window[i])
+            else:
+                curr_sma = None
+            # Calculate streaming EMA
+            if self.prev_ema[i] is None:
+                curr_ema = current_price
+            else:
+                curr_ema = alpha * current_price + (1 - alpha) * self.prev_ema[i]
+            # Crossover logic (need previous values)
+            signal = 0
+            if (
+                self.prev_ema[i] is not None
+                and self.prev_sma[i] is not None
+                and curr_sma is not None
+            ):
+                if curr_ema > curr_sma:
+                    signal = 1  # EMA crossed above SMA: buy
+                elif curr_ema < curr_sma:
+                    signal = -1  # EMA crossed below SMA: sell
+
+                # if self.prev_ema[i] < self.prev_sma[i] and curr_ema > curr_sma:
+                #     signal = 1  # EMA crossed above SMA: buy
+                # elif self.prev_ema[i] > self.prev_sma[i] and curr_ema < curr_sma:
+                #     signal = -1  # EMA crossed below SMA: sell
+            # Position sizing
+            if signal != 0 and current_price > 0:
+                position_size = int(self.capital_allocation * signal / current_price)
+                # position_size = int(50 * signal)
+                positions[i] = position_size
+            else:
+                positions[i] = 0
+            # Update state
+            self.prev_ema[i] = curr_ema
+            self.prev_sma[i] = curr_sma
+        self.curPos = positions
+        return self.curPos
+
+
 # ----------- Lead-Lag Pair Discovery (Stateless Helper) -----------
 def discover_lead_lag_pairs(prcSoFar, window=60, max_lag=10, min_corr=0.3, top_n=5):
     nins, nt = prcSoFar.shape
@@ -519,3 +565,125 @@ def discover_lead_lag_pairs(prcSoFar, window=60, max_lag=10, min_corr=0.3, top_n
                 pairs.append((i, j, best_lag, best_corr))
     pairs = sorted(pairs, key=lambda x: abs(x[3]), reverse=True)
     return pairs[:top_n]
+
+
+# ----------- Plotting Function with SMA/EMA and Bollinger Bands -----------
+def plot_price_with_indicators(
+    prices, instrument_idx=0, period=20, std_dev=1.6, ma_type="SMA", figsize=(12, 8)
+):
+    """
+    Plot prices with moving average and Bollinger bands.
+
+    Parameters:
+    - prices: numpy array of shape (n_instruments, n_timepoints)
+    - instrument_idx: index of the instrument to plot (default 0)
+    - period: period for moving average calculation (default 20)
+    - std_dev: number of standard deviations for Bollinger bands (default 1.6)
+    - ma_type: 'SMA' for Simple Moving Average or 'EMA' for Exponential Moving Average
+    - figsize: tuple for figure size (default (12, 8))
+    """
+    # Extract price data for the specified instrument
+    price_data = prices[instrument_idx, :]
+    time_points = np.arange(len(price_data))
+
+    # Calculate moving average
+    if ma_type.upper() == "SMA":
+        # Simple Moving Average
+        ma_values = []
+        for i in range(len(price_data)):
+            if i < period - 1:
+                ma_values.append(np.nan)
+            else:
+                ma_values.append(np.mean(price_data[i - period + 1 : i + 1]))
+        ma_values = np.array(ma_values)
+    elif ma_type.upper() == "EMA":
+        # Exponential Moving Average
+        alpha = 2 / (period + 1)
+        ma_values = np.zeros_like(price_data)
+        ma_values[0] = price_data[0]
+        for i in range(1, len(price_data)):
+            ma_values[i] = alpha * price_data[i] + (1 - alpha) * ma_values[i - 1]
+    else:
+        raise ValueError("ma_type must be 'SMA' or 'EMA'")
+
+    # Calculate Bollinger Bands
+    upper_band = np.zeros_like(price_data)
+    lower_band = np.zeros_like(price_data)
+
+    for i in range(len(price_data)):
+        if i < period - 1:
+            upper_band[i] = np.nan
+            lower_band[i] = np.nan
+        else:
+            window_prices = price_data[i - period + 1 : i + 1]
+            window_ma = np.mean(window_prices)
+            window_std = np.std(window_prices)
+            upper_band[i] = window_ma + (std_dev * window_std)
+            lower_band[i] = window_ma - (std_dev * window_std)
+
+    # Create the plot
+    plt.figure(figsize=figsize)
+
+    # Plot price data
+    plt.plot(time_points, price_data, label="Price", color="black", linewidth=1.5)
+
+    # Plot moving average
+    plt.plot(
+        time_points, ma_values, label=f"{ma_type} ({period})", color="blue", linewidth=2
+    )
+
+    # Plot Bollinger Bands
+    plt.plot(
+        time_points,
+        upper_band,
+        label=f"Upper Band ({std_dev}σ)",
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+    )
+    plt.plot(
+        time_points,
+        lower_band,
+        label=f"Lower Band ({std_dev}σ)",
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+    )
+
+    # Fill the area between Bollinger Bands
+    plt.fill_between(
+        time_points,
+        upper_band,
+        lower_band,
+        alpha=0.1,
+        color="gray",
+        label="Bollinger Band Area",
+    )
+
+    # Customize the plot
+    plt.title(
+        f"Instrument {instrument_idx} - Price with {ma_type} and Bollinger Bands",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.xlabel("Time", fontsize=12)
+    plt.ylabel("Price", fontsize=12)
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3)
+
+    # Add some statistics
+    stats_text = f"Period: {period}\nStd Dev: {std_dev}\nCurrent Price: {price_data[-1]:.2f}\nMA: {ma_values[-1]:.2f}"
+    plt.text(
+        0.02,
+        0.98,
+        stats_text,
+        transform=plt.gca().transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+    return ma_values, upper_band, lower_band
